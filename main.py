@@ -1,15 +1,12 @@
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
-import requests
 from io import BytesIO
 
-# --------------------------------------------------
+# ==========================================
 # 기본 설정
-# --------------------------------------------------
+# ==========================================
 st.set_page_config(
     page_title="팔각도와 부상기간, 부상 일수",
     page_icon="⚾",
@@ -18,48 +15,121 @@ st.set_page_config(
 
 st.title("⚾ 팔각도와 부상기간, 부상 일수")
 st.markdown(
-    "선수의 팔 각도와 부상 횟수 및 부상 기간 사이의 관계를 분석합니다."
+    "선수들의 팔 각도와 부상 횟수 및 부상 일수 사이의 관계를 산점도로 확인합니다."
 )
 
-SHEET_ID = "1I0jc_dkPFAqInxhxaKKccfLjQ8na9TKx"
-CSV_URL = (
-    f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export"
-    "?format=csv&gid=0"
+# ==========================================
+# GitHub 데이터 주소
+# ==========================================
+# 아래 주소를 본인의 GitHub 저장소에 올린 CSV의
+# Raw 주소로 변경하세요.
+
+GITHUB_CSV_URL = (
+    "https://raw.githubusercontent.com/"
+    "본인아이디/저장소이름/main/data.csv"
 )
 
-# --------------------------------------------------
+# ==========================================
 # 데이터 불러오기
-# --------------------------------------------------
+# ==========================================
 @st.cache_data(ttl=600)
-def load_google_sheet():
-    response = requests.get(CSV_URL, timeout=20)
-    response.raise_for_status()
-
-    return pd.read_csv(BytesIO(response.content))
+def load_data(url):
+    return pd.read_csv(url, encoding="utf-8-sig")
 
 
-def load_uploaded_file(file):
-    if file.name.endswith(".csv"):
-        return pd.read_csv(file)
+try:
+    if "본인아이디" in GITHUB_CSV_URL:
+        st.error("main.py에서 GitHub Raw 주소를 먼저 설정해 주세요.")
+        st.stop()
 
-    return pd.read_excel(file)
+    data = load_data(GITHUB_CSV_URL)
 
-
-# --------------------------------------------------
-# 열 이름 자동 인식
-# --------------------------------------------------
-def find_column(columns, keywords):
-    for col in columns:
-        name = str(col).replace(" ", "").lower()
-
-        for keyword in keywords:
-            if keyword.replace(" ", "").lower() in name:
-                return col
-
-    return None
+except Exception as e:
+    st.error("GitHub 데이터를 불러오지 못했습니다.")
+    st.error(f"오류 내용: {e}")
+    st.info("GitHub CSV 파일의 Raw 주소와 공개 설정을 확인해 주세요.")
+    st.stop()
 
 
-def to_numeric(series):
+if data.empty:
+    st.error("데이터가 비어 있습니다.")
+    st.stop()
+
+# ==========================================
+# 데이터 확인
+# ==========================================
+st.subheader("📋 원본 데이터")
+
+st.write(f"전체 데이터: **{len(data):,}행**")
+
+with st.expander("원본 데이터 펼쳐 보기"):
+    st.dataframe(data, use_container_width=True)
+
+# ==========================================
+# 데이터 열 선택
+# ==========================================
+st.divider()
+st.subheader("🔧 분석에 사용할 열 선택")
+
+columns = list(data.columns)
+
+col1, col2 = st.columns(2)
+
+with col1:
+    player_col = st.selectbox(
+        "선수 이름 열",
+        columns
+    )
+
+    angle_col = st.selectbox(
+        "팔 각도 열",
+        columns
+    )
+
+with col2:
+    duration_col = st.selectbox(
+        "부상 일수 열",
+        columns
+    )
+
+    count_mode = st.radio(
+        "부상 횟수 계산 방법",
+        [
+            "부상 기록의 행 개수로 계산",
+            "부상 횟수 열의 값 사용"
+        ]
+    )
+
+    if count_mode == "부상 횟수 열의 값 사용":
+        count_col = st.selectbox(
+            "부상 횟수 열",
+            columns
+        )
+    else:
+        count_col = None
+
+# ==========================================
+# 집계 방식
+# ==========================================
+st.divider()
+st.subheader("📊 선수별 데이터 처리")
+
+aggregation_mode = st.radio(
+    "데이터 형태를 선택하세요.",
+    [
+        "선수별 요약 데이터",
+        "부상 기록별 데이터"
+    ],
+    help=(
+        "선수별 요약 데이터: 한 선수의 정보가 이미 한 행에 정리된 경우\n"
+        "부상 기록별 데이터: 한 선수가 부상할 때마다 별도 행으로 기록된 경우"
+    )
+)
+
+# ==========================================
+# 숫자 변환
+# ==========================================
+def numeric(series):
     return pd.to_numeric(
         series.astype(str)
         .str.replace(",", "", regex=False)
@@ -70,396 +140,257 @@ def to_numeric(series):
     )
 
 
-# --------------------------------------------------
-# 데이터 선택
-# --------------------------------------------------
-st.sidebar.header("📂 데이터 설정")
+df = pd.DataFrame()
 
-uploaded_file = st.sidebar.file_uploader(
-    "CSV 또는 엑셀 파일 업로드",
-    type=["csv", "xlsx", "xls"]
-)
+df["선수"] = data[player_col].astype(str).str.strip()
+df["팔 각도"] = numeric(data[angle_col])
+df["부상 일수"] = numeric(data[duration_col])
 
-data = None
-
-if uploaded_file is not None:
-    try:
-        data = load_uploaded_file(uploaded_file)
-        st.sidebar.success("업로드한 파일을 불러왔습니다.")
-
-    except Exception as e:
-        st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
-        st.stop()
-
+if count_col is not None:
+    df["부상 횟수"] = numeric(data[count_col])
 else:
-    try:
-        data = load_google_sheet()
-        st.sidebar.success("구글 스프레드시트를 불러왔습니다.")
+    df["부상 횟수"] = 1
 
-    except Exception:
-        st.warning(
-            "구글 스프레드시트에 접근할 수 없습니다. "
-            "공유 권한을 확인하거나 CSV/엑셀 파일을 업로드해 주세요."
-        )
-        st.info(
-            "구글 스프레드시트의 공유 설정에서 링크가 있는 사용자가 "
-            "볼 수 있도록 설정해야 합니다."
-        )
-        st.stop()
-
-
-if data is None or data.empty:
-    st.error("분석할 데이터가 없습니다.")
-    st.stop()
-
-
-# --------------------------------------------------
-# 데이터 기본 정보
-# --------------------------------------------------
-st.subheader("📋 데이터 확인")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.metric("전체 데이터 수", f"{len(data):,}개")
-
-with col2:
-    st.metric("전체 열 개수", f"{len(data.columns):,}개")
-
-with st.expander("원본 데이터 확인"):
-    st.dataframe(data, use_container_width=True)
-
-
-# --------------------------------------------------
-# 분석에 사용할 열 선택
-# --------------------------------------------------
-st.subheader("🔧 분석에 사용할 데이터 선택")
-
-columns = list(data.columns)
-
-player_guess = find_column(
-    columns,
-    ["선수명", "선수", "이름", "player", "name"]
-)
-
-angle_guess = find_column(
-    columns,
-    ["팔각도", "팔 각도", "arm angle", "angle"]
-)
-
-count_guess = find_column(
-    columns,
-    ["부상횟수", "부상 횟수", "부상건수", "injury count",
-     "injuries", "count"]
-)
-
-duration_guess = find_column(
-    columns,
-    ["부상기간", "부상 기간", "부상일수", "부상 일수",
-     "injury duration", "days injured", "duration", "days"]
-)
-
-
-def default_index(options, guess):
-    if guess in options:
-        return options.index(guess)
-    return 0
-
-
-with st.container(border=True):
-    st.markdown("**데이터 열 지정**")
-
-    player_options = ["선수 이름 사용 안 함"] + columns
-
-    player_choice = st.selectbox(
-        "선수 이름 열",
-        player_options,
-        index=(
-            player_options.index(player_guess)
-            if player_guess in player_options else 0
-        )
-    )
-
-    angle_col = st.selectbox(
-        "선수의 팔 각도 열 (X축)",
-        columns,
-        index=default_index(columns, angle_guess)
-    )
-
-    count_col = st.selectbox(
-        "부상 횟수 열 (첫 번째 그래프 Y축)",
-        columns,
-        index=default_index(columns, count_guess)
-    )
-
-    duration_col = st.selectbox(
-        "부상 기간 또는 부상 일수 열 (두 번째 그래프 Y축)",
-        columns,
-        index=default_index(columns, duration_guess)
-    )
-
-
-player_col = (
-    None if player_choice == "선수 이름 사용 안 함"
-    else player_choice
-)
-
-
-# --------------------------------------------------
-# 데이터 전처리
-# --------------------------------------------------
-df = data.copy()
-
-df["_팔각도"] = to_numeric(df[angle_col])
-df["_부상횟수"] = to_numeric(df[count_col])
-df["_부상기간"] = to_numeric(df[duration_col])
-
-if player_col:
-    df["_선수명"] = df[player_col].astype(str)
-else:
-    df["_선수명"] = [
-        f"선수 {i+1}" for i in range(len(df))
-    ]
-
-# 분석에 필요한 값이 모두 있는 행만 사용
-analysis_df = df.dropna(
-    subset=["_팔각도", "_부상횟수", "_부상기간"]
-).copy()
-
-# 음수 데이터 제거
-analysis_df = analysis_df[
-    (analysis_df["_팔각도"] >= 0)
-    & (analysis_df["_부상횟수"] >= 0)
-    & (analysis_df["_부상기간"] >= 0)
+# 이름이 없는 행 제거
+df = df[
+    df["선수"].notna()
+    & (df["선수"] != "")
+    & (df["선수"].str.lower() != "nan")
 ]
 
-if len(analysis_df) < 2:
-    st.error(
-        "분석 가능한 데이터가 부족합니다. "
-        "열 선택과 원본 데이터를 확인해 주세요."
-    )
+# 팔 각도는 0~180도 범위만 허용
+invalid_angle = (
+    df["팔 각도"].notna()
+    & ((df["팔 각도"] < 0) | (df["팔 각도"] > 180))
+)
+
+invalid_angle_count = int(invalid_angle.sum())
+
+# 팔 각도가 없는 데이터 또는 범위를 벗어난 데이터 제외
+df = df[
+    df["팔 각도"].between(0, 180)
+].copy()
+
+# ==========================================
+# 선수별 집계
+# ==========================================
+if aggregation_mode == "부상 기록별 데이터":
+
+    if count_col is None:
+        # 한 행을 부상 1회로 계산
+        df["부상 횟수"] = 1
+
+    # 같은 선수의 팔 각도는 평균으로 집계
+    # 부상 횟수와 부상 일수는 합계로 집계
+    result = df.groupby("선수").agg(
+        팔각도=("팔 각도", "mean"),
+        부상횟수=("부상 횟수", "sum"),
+        부상일수=("부상 일수", "sum")
+    ).reset_index()
+
+else:
+
+    # 이미 선수별로 정리된 데이터
+    # 중복 선수가 있다면 각도는 평균, 횟수와 일수는 합계
+    result = df.groupby("선수").agg(
+        팔각도=("팔 각도", "mean"),
+        부상횟수=("부상 횟수", "sum"),
+        부상일수=("부상 일수", "sum")
+    ).reset_index()
+
+# 부상 횟수와 부상 일수가 모두 유효한 데이터
+result["부상횟수"] = result["부상횟수"].fillna(0)
+result["부상일수"] = result["부상일수"].fillna(0)
+
+result = result[
+    (result["부상횟수"] >= 0)
+    & (result["부상일수"] >= 0)
+].copy()
+
+if len(result) < 2:
+    st.error("분석 가능한 선수가 2명 미만입니다.")
     st.stop()
 
-
+# ==========================================
+# 데이터 검증
+# ==========================================
 st.divider()
-
-st.subheader("📊 분석 데이터 요약")
+st.subheader("🔍 데이터 검증 결과")
 
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    st.metric("분석에 사용된 데이터", f"{len(analysis_df):,}개")
+    st.metric("분석 선수 수", f"{len(result):,}명")
 
 with c2:
     st.metric(
-        "평균 팔 각도",
-        f"{analysis_df['_팔각도'].mean():.2f}°"
+        "팔 각도 최솟값",
+        f"{result['팔각도'].min():.1f}°"
     )
 
 with c3:
     st.metric(
-        "평균 부상 횟수",
-        f"{analysis_df['_부상횟수'].mean():.2f}회"
+        "팔 각도 최댓값",
+        f"{result['팔각도'].max():.1f}°"
     )
 
-
-# --------------------------------------------------
-# 회귀분석 함수
-# --------------------------------------------------
-def draw_regression_graph(df, x_col, y_col, title, x_title, y_title):
-
-    x = df[x_col].to_numpy(dtype=float)
-    y = df[y_col].to_numpy(dtype=float)
-
-    fig = go.Figure()
-
-    # 선수별 산점도
-    fig.add_trace(
-        go.Scatter(
-            x=x,
-            y=y,
-            mode="markers",
-            name="선수 데이터",
-            text=df["_선수명"],
-            customdata=np.column_stack((x, y)),
-            hovertemplate=(
-                "선수: %{text}<br>"
-                "팔 각도: %{x:.2f}°<br>"
-                + y_title + ": %{y:.2f}"
-                + "<extra></extra>"
-            ),
-            marker=dict(
-                size=10,
-                opacity=0.75
-            )
-        )
+if invalid_angle_count > 0:
+    st.warning(
+        f"팔 각도가 0~180도 범위를 벗어난 원본 기록 "
+        f"{invalid_angle_count}개를 제외했습니다. "
+        "원본 열을 다시 확인해 주세요."
     )
 
-    regression_text = "회귀분석 불가"
-    r_squared = None
+if result["팔각도"].nunique() < 2:
+    st.warning("팔 각도가 모두 같아 산점도에서 관계를 비교하기 어렵습니다.")
 
-    # 서로 다른 X값이 2개 이상일 때 회귀분석
-    if len(np.unique(x)) >= 2:
-
-        slope, intercept = np.polyfit(x, y, 1)
-
-        predicted = slope * x + intercept
-
-        ss_res = np.sum((y - predicted) ** 2)
-        ss_tot = np.sum((y - np.mean(y)) ** 2)
-
-        if ss_tot != 0:
-            r_squared = 1 - ss_res / ss_tot
-
-        line_x = np.linspace(x.min(), x.max(), 100)
-        line_y = slope * line_x + intercept
-
-        fig.add_trace(
-            go.Scatter(
-                x=line_x,
-                y=line_y,
-                mode="lines",
-                name="선형 회귀선",
-                line=dict(
-                    width=3,
-                    dash="dash"
-                )
-            )
-        )
-
-        regression_text = (
-            f"회귀식: y = {slope:.4f}x "
-            f"{intercept:+.4f}"
-        )
-
-    fig.update_layout(
-        title=title,
-        xaxis_title=x_title,
-        yaxis_title=y_title,
-        height=550,
-        hovermode="closest",
-        legend=dict(
-            orientation="h",
-            y=1.1
-        )
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown(f"**{regression_text}**")
-
-    if r_squared is not None:
-        st.metric(
-            "결정계수 (R²)",
-            f"{r_squared:.4f}"
-        )
-
-    return r_squared
-
-
-# --------------------------------------------------
+# ==========================================
 # 첫 번째 그래프
-# --------------------------------------------------
-st.header("1️⃣ 팔 각도와 부상 횟수의 관계")
+# ==========================================
+st.divider()
+
+st.header("1️⃣ 팔 각도와 부상 횟수")
 
 st.markdown(
     """
-    선수의 팔 각도를 X축에, 부상 횟수를 Y축에 나타낸 산점도입니다.
-
-    각 점은 한 선수의 데이터를 의미하며,
-    점선은 두 변수 사이의 선형 회귀선을 나타냅니다.
+    - X축: 선수의 팔 각도
+    - Y축: 선수의 부상 횟수
+    - 점 하나: 선수 한 명
     """
 )
 
-r2_count = draw_regression_graph(
-    analysis_df,
-    "_팔각도",
-    "_부상횟수",
-    "팔 각도와 부상 횟수의 관계",
-    "팔 각도 (°)",
-    "부상 횟수 (회)"
+fig1 = px.scatter(
+    result,
+    x="팔각도",
+    y="부상횟수",
+    hover_name="선수",
+    hover_data={
+        "팔각도": ":.1f",
+        "부상횟수": True,
+        "부상일수": True
+    },
+    labels={
+        "팔각도": "팔 각도 (°)",
+        "부상횟수": "부상 횟수 (회)"
+    },
+    title="선수별 팔 각도와 부상 횟수",
 )
 
+fig1.update_traces(
+    marker=dict(
+        size=11,
+        opacity=0.75
+    )
+)
 
-# --------------------------------------------------
+fig1.update_layout(
+    height=550,
+    xaxis=dict(rangemode="tozero"),
+    yaxis=dict(rangemode="tozero")
+)
+
+st.plotly_chart(fig1, use_container_width=True)
+
+# ==========================================
 # 두 번째 그래프
-# --------------------------------------------------
+# ==========================================
 st.divider()
 
-st.header("2️⃣ 팔 각도와 부상 기간의 관계")
+st.header("2️⃣ 팔 각도와 부상 일수")
 
 st.markdown(
     """
-    선수의 팔 각도를 X축에, 부상 기간 또는 부상 일수를 Y축에 나타낸 산점도입니다.
-
-    각 점은 한 선수의 데이터를 의미하며,
-    점선을 통해 팔 각도와 부상 기간의 선형 관계를 확인할 수 있습니다.
+    - X축: 선수의 팔 각도
+    - Y축: 선수의 부상 일수
+    - 점 하나: 선수 한 명
     """
 )
 
-r2_duration = draw_regression_graph(
-    analysis_df,
-    "_팔각도",
-    "_부상기간",
-    "팔 각도와 부상 기간의 관계",
-    "팔 각도 (°)",
-    "부상 기간 / 일수"
+fig2 = px.scatter(
+    result,
+    x="팔각도",
+    y="부상일수",
+    hover_name="선수",
+    hover_data={
+        "팔각도": ":.1f",
+        "부상횟수": True,
+        "부상일수": True
+    },
+    labels={
+        "팔각도": "팔 각도 (°)",
+        "부상일수": "부상 일수 (일)"
+    },
+    title="선수별 팔 각도와 부상 일수",
 )
 
+fig2.update_traces(
+    marker=dict(
+        size=11,
+        opacity=0.75
+    )
+)
 
-# --------------------------------------------------
-# 데이터 표
-# --------------------------------------------------
+fig2.update_layout(
+    height=550,
+    xaxis=dict(rangemode="tozero"),
+    yaxis=dict(rangemode="tozero")
+)
+
+st.plotly_chart(fig2, use_container_width=True)
+
+# ==========================================
+# 선수별 데이터 표
+# ==========================================
 st.divider()
 
-st.header("📑 분석에 사용된 선수별 데이터")
-
-result_df = pd.DataFrame({
-    "선수": analysis_df["_선수명"],
-    "팔 각도 (°)": analysis_df["_팔각도"],
-    "부상 횟수 (회)": analysis_df["_부상횟수"],
-    "부상 기간 / 일수": analysis_df["_부상기간"]
-})
+st.header("📑 선수별 분석 데이터")
 
 st.dataframe(
-    result_df,
+    result.rename(columns={
+        "팔각도": "팔 각도 (°)",
+        "부상횟수": "부상 횟수 (회)",
+        "부상일수": "부상 일수 (일)"
+    }).sort_values("팔 각도 (°)"),
     use_container_width=True,
     hide_index=True
 )
 
-# CSV 다운로드
-csv = result_df.to_csv(
+# ==========================================
+# 데이터 다운로드
+# ==========================================
+csv = result.to_csv(
     index=False,
     encoding="utf-8-sig"
 )
 
 st.download_button(
-    label="📥 분석 데이터 CSV 다운로드",
+    "📥 선수별 분석 데이터 다운로드",
     data=csv,
     file_name="팔각도_부상분석.csv",
     mime="text/csv"
 )
 
-
-# --------------------------------------------------
-# 해석 안내
-# --------------------------------------------------
+# ==========================================
+# 마무리
+# ==========================================
 st.divider()
 
-st.header("💡 회귀분석 결과 해석하기")
+st.subheader("💡 그래프 해석")
 
 st.markdown(
     """
-    - **회귀선의 기울기**: 팔 각도가 증가할 때 부상 횟수 또는 부상 기간이 어떻게 변하는지 보여줍니다.
-    - **양의 기울기**: 팔 각도가 커질수록 Y값이 증가하는 경향입니다.
-    - **음의 기울기**: 팔 각도가 커질수록 Y값이 감소하는 경향입니다.
-    - **R² (결정계수)**: 회귀모형이 데이터의 변동을 얼마나 설명하는지 나타냅니다. 1에 가까울수록 설명력이 높습니다.
+    두 산점도에서 점들이 어떤 형태로 분포하는지 관찰해 보세요.
+
+    - 오른쪽으로 갈수록 점들이 위쪽에 모이는가?
+    - 오른쪽으로 갈수록 점들이 아래쪽에 모이는가?
+    - 특정한 방향 없이 흩어져 있는가?
+
+    이를 통해 팔 각도와 부상 횟수 및 부상 일수 사이에
+    어떤 관계가 나타나는지 탐구할 수 있습니다.
     """
 )
 
 st.warning(
-    "주의: 회귀분석은 변수 사이의 통계적 관계를 보여줄 뿐, "
-    "팔 각도가 부상을 직접 일으킨다는 인과관계를 증명하지는 않습니다."
+    "산점도에서 나타나는 관계만으로 팔 각도가 부상의 원인이라고 "
+    "단정할 수는 없습니다."
 )
-
-st.caption("팔 각도와 부상 관련 데이터 분석 앱")
