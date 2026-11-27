@@ -24,9 +24,8 @@ st.markdown(
 # 아래 주소를 본인의 GitHub 저장소에 올린 CSV의
 # Raw 주소로 변경하세요.
 
-GITHUB_CSV_URL = (
-    "https://docs.google.com/spreadsheets/d/1I0jc_dkPFAqInxhxaKKccfLjQ8na9TKx/edit?gid=1503298569#gid=1503298569"
-)
+GITHUB_CSV_URL = "https://docs.google.com/spreadsheets/d/1I0jc_dkPFAqInxhxaKKccfLjQ8na9TKx/edit?gid=1503298569#gid=1503298569"
+
 
 # ==========================================
 # 데이터 불러오기
