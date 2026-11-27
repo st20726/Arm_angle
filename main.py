@@ -2,7 +2,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import re
 
 # ---------------------------------------
 # 페이지 설정
@@ -14,10 +13,7 @@ st.set_page_config(
 )
 
 st.title("⚾ 팔각도와 부상기간, 부상 일수")
-st.write(
-    "선수별 팔 각도와 부상 횟수 및 부상 일수의 관계를 "
-    "산점도로 확인하는 앱입니다."
-)
+st.write("선수별 팔 각도와 부상 횟수 및 부상 일수의 관계를 알아봅니다.")
 
 # ---------------------------------------
 # 구글 스프레드시트 주소
@@ -34,77 +30,65 @@ GOOGLE_CSV_URL = (
 # 데이터 불러오기
 # ---------------------------------------
 @st.cache_data(ttl=600)
-def load_data(header_row):
+def load_data():
     df = pd.read_csv(
         GOOGLE_CSV_URL,
         encoding="utf-8-sig",
-        header=header_row,
-        engine="python"
+        engine="python",
+        on_bad_lines="warn"
     )
 
-    # 완전히 비어 있는 행과 열 제거
-    df = df.dropna(how="all")
-    df = df.dropna(axis=1, how="all")
-
-    # 열 이름의 앞뒤 공백 제거
-    df.columns = [
-        str(col).strip()
-        for col in df.columns
-    ]
-
+    df.columns = [str(col).strip() for col in df.columns]
     return df
 
 
-# ---------------------------------------
-# 열 선택 함수
-# ---------------------------------------
-def find_column(columns, candidates):
-    for candidate in candidates:
-        for col in columns:
-            if candidate.lower() == str(col).lower():
-                return col
+try:
+    df = load_data()
 
-    for candidate in candidates:
-        for col in columns:
-            if candidate.lower() in str(col).lower():
-                return col
-
-    return None
-
-
-def select_column(label, columns, candidates=None, optional=False):
-    candidates = candidates or []
-    matched = find_column(columns, candidates)
-
-    options = list(columns)
-
-    if optional:
-        options = ["선택 안 함"] + options
-
-    default_index = 0
-
-    if matched in options:
-        default_index = options.index(matched)
-    elif optional:
-        default_index = 0
-
-    return st.selectbox(
-        label,
-        options,
-        index=default_index
-    )
+except Exception as e:
+    st.error("데이터를 불러오지 못했습니다.")
+    st.write("구글 스프레드시트 공유 설정을 확인해 주세요.")
+    st.code(str(e))
+    st.stop()
 
 
 # ---------------------------------------
-# 숫자 변환 함수
+# 필요한 열 지정
 # ---------------------------------------
-def convert_number(series):
+PLAYER_COL = "Unnamed: 1"
+ANGLE_COL = "Unnamed: 6"
+COUNT_COL = "Unnamed: 9"
+DAYS_COL = "Unnamed: 10"
+
+required_columns = [
+    PLAYER_COL,
+    ANGLE_COL,
+    COUNT_COL,
+    DAYS_COL
+]
+
+missing_columns = [
+    col for col in required_columns
+    if col not in df.columns
+]
+
+if missing_columns:
+    st.error("필요한 데이터 열을 찾을 수 없습니다.")
+    st.write("찾지 못한 열:", missing_columns)
+    st.write("현재 데이터의 열 이름:")
+    st.write(list(df.columns))
+    st.stop()
+
+
+# ---------------------------------------
+# 숫자 데이터 변환
+# ---------------------------------------
+def to_number(series):
     cleaned = (
         series.astype(str)
         .str.replace(",", "", regex=False)
-        .str.replace("일", "", regex=False)
         .str.replace("°", "", regex=False)
-        .str.replace("명", "", regex=False)
+        .str.replace("일", "", regex=False)
         .str.strip()
     )
 
@@ -117,210 +101,57 @@ def convert_number(series):
 
 
 # ---------------------------------------
-# 데이터 불러오기 화면
+# 분석용 데이터 구성
 # ---------------------------------------
-st.subheader("1. 데이터 확인")
+data = pd.DataFrame()
 
-header_row = st.number_input(
-    "열 이름이 있는 행 번호 (첫 번째 행은 0)",
-    min_value=0,
-    max_value=20,
-    value=0,
-    step=1,
-    help="스프레드시트의 첫 번째 행에 열 이름이 있다면 0을 그대로 사용하세요."
-)
+data["선수"] = df[PLAYER_COL].astype("string").str.strip()
+data["팔각도"] = to_number(df[ANGLE_COL])
+data["부상횟수"] = to_number(df[COUNT_COL])
+data["부상일수"] = to_number(df[DAYS_COL])
 
-try:
-    df = load_data(int(header_row))
-
-except Exception as e:
-    st.error("데이터를 불러오지 못했습니다.")
-    st.write("다음 사항을 확인해 주세요.")
-    st.markdown(
-        """
-        - 구글 스프레드시트 공유 설정이 '링크가 있는 사용자 - 뷰어'인지 확인
-        - 데이터가 있는 시트의 GID가 맞는지 확인
-        - 첫 번째 행 또는 선택한 행에 열 이름이 있는지 확인
-        - 셀 안에 쉼표가 포함된 경우 데이터가 정상적으로 입력되어 있는지 확인
-        """
-    )
-    st.code(str(e))
-    st.stop()
-
-
-if df.empty:
-    st.error("불러온 데이터가 비어 있습니다.")
-    st.stop()
-
-
-st.success("데이터를 불러왔습니다.")
-
-with st.expander("원본 데이터 미리 보기"):
-    st.write(f"데이터 크기: {df.shape[0]}행 × {df.shape[1]}열")
-    st.dataframe(df, use_container_width=True)
-
-# ---------------------------------------
-# 열 설정
-# ---------------------------------------
-st.subheader("2. 데이터 열 선택")
-
-st.info(
-    "실제 데이터의 열 이름에 맞게 아래 항목을 선택해 주세요. "
-    "자동으로 선택된 열도 반드시 확인해 주세요."
-)
-
-columns = list(df.columns)
-
-col1, col2 = st.columns(2)
-
-with col1:
-    player_col = select_column(
-        "선수 이름 열",
-        columns,
-        ["선수명", "선수", "이름", "player", "name"]
-    )
-
-    angle_col = select_column(
-        "팔 각도 열",
-        columns,
-        ["팔각도", "팔 각도", "각도", "arm angle", "angle"]
-    )
-
-with col2:
-    duration_col = select_column(
-        "부상 일수 열",
-        columns,
-        ["부상일수", "부상 일수", "부상기간", "부상 기간",
-         "기간", "injury days", "duration", "days"]
-    )
-
-    count_col = select_column(
-        "부상 횟수 열 (없으면 선택 안 함)",
-        columns,
-        ["부상횟수", "부상 횟수", "부상수", "injury count",
-         "injuries", "count"],
-        optional=True
-    )
-
-# ---------------------------------------
-# 데이터 형태 선택
-# ---------------------------------------
-st.subheader("3. 데이터 형태")
-
-data_type = st.radio(
-    "스프레드시트의 데이터는 어떤 형태인가요?",
-    [
-        "선수별 요약 데이터",
-        "부상 기록별 데이터"
-    ],
-    help=(
-        "선수별 요약 데이터: 선수 한 명당 한 행으로 정리된 자료\n"
-        "부상 기록별 데이터: 부상 사건 하나당 한 행으로 정리된 자료"
-    )
-)
-
-if data_type == "선수별 요약 데이터" and count_col == "선택 안 함":
-    st.warning(
-        "선수별 요약 데이터에서는 부상 횟수 열을 선택해야 합니다. "
-        "부상 횟수가 들어 있는 열을 지정해 주세요."
-    )
-    st.stop()
-
-
-# ---------------------------------------
-# 분석용 데이터 만들기
-# ---------------------------------------
-work = df.copy()
-
-work["선수"] = work[player_col].astype("string").str.strip()
-work["팔 각도"] = convert_number(work[angle_col])
-work["부상 일수"] = convert_number(work[duration_col])
-
-if count_col != "선택 안 함":
-    work["부상 횟수"] = convert_number(work[count_col])
-else:
-    # 부상 기록별 데이터에서는 한 행을 부상 1건으로 계산
-    work["부상 횟수"] = 1
-
-
-# 선수 이름 없는 행 제거
-work = work.dropna(subset=["선수", "팔 각도"])
-work = work[
-    (work["선수"] != "")
-    & (work["선수"].str.lower() != "nan")
+# 선수 이름이 없는 행 제거
+data = data.dropna(subset=["선수", "팔각도"])
+data = data[
+    (data["선수"] != "")
+    & (data["선수"].str.lower() != "nan")
 ]
 
-# 팔 각도 범위 확인
-invalid_angle = ~work["팔 각도"].between(0, 180)
-
+# 팔 각도 0~180도 범위만 사용
+invalid_angle = ~data["팔각도"].between(0, 180)
 invalid_count = int(invalid_angle.sum())
+
+data = data[data["팔각도"].between(0, 180)].copy()
+
+# 부상 횟수와 부상 일수의 결측값 처리
+data["부상횟수"] = data["부상횟수"].fillna(0)
+data["부상일수"] = data["부상일수"].fillna(0)
+
+# 음수 데이터 제거
+data.loc[data["부상횟수"] < 0, "부상횟수"] = 0
+data.loc[data["부상일수"] < 0, "부상일수"] = 0
+
+if data.empty:
+    st.error("분석할 수 있는 데이터가 없습니다. 원본 데이터를 확인해 주세요.")
+    st.stop()
 
 if invalid_count > 0:
     st.warning(
-        f"팔 각도가 0~180도 범위를 벗어난 데이터 "
-        f"{invalid_count}개를 분석에서 제외했습니다."
+        f"팔 각도가 0~180도 범위를 벗어난 {invalid_count}개 행은 제외했습니다."
     )
-
-work = work[work["팔 각도"].between(0, 180)].copy()
-
-if work.empty:
-    st.error(
-        "분석할 수 있는 데이터가 없습니다. "
-        "팔 각도 열을 올바르게 선택했는지 확인해 주세요."
-    )
-    st.stop()
-
-
-# 부상 일수 결측값은 합계 계산에서 제외
-work["부상 일수"] = work["부상 일수"].fillna(0)
-
-# 부상 횟수 결측값 처리
-work["부상 횟수"] = work["부상 횟수"].fillna(0)
-
-# 음수 값 제거
-work.loc[work["부상 일수"] < 0, "부상 일수"] = 0
-work.loc[work["부상 횟수"] < 0, "부상 횟수"] = 0
 
 
 # ---------------------------------------
-# 선수별 집계
+# 선수별 데이터 집계
 # ---------------------------------------
-if data_type == "부상 기록별 데이터":
-    # 한 행이 부상 한 건이므로 선수별 행 개수를 계산
-    if count_col == "선택 안 함":
-        work["부상 횟수"] = 1
-
-    result = (
-        work.groupby("선수")
-        .agg(
-            팔각도=("팔 각도", "mean"),
-            부상횟수=("부상 횟수", "sum"),
-            부상일수=("부상 일수", "sum")
-        )
-        .reset_index()
+result = (
+    data.groupby("선수")
+    .agg(
+        팔각도=("팔각도", "mean"),
+        부상횟수=("부상횟수", "sum"),
+        부상일수=("부상일수", "sum")
     )
-
-else:
-    # 선수별 요약 데이터는 중복 선수명이 있으면 합산
-    result = (
-        work.groupby("선수")
-        .agg(
-            팔각도=("팔 각도", "mean"),
-            부상횟수=("부상 횟수", "sum"),
-            부상일수=("부상 일수", "sum")
-        )
-        .reset_index()
-    )
-
-
-# 분석 가능한 숫자 데이터만 사용
-result = result.replace(
-    [float("inf"), float("-inf")],
-    pd.NA
-)
-
-result = result.dropna(
-    subset=["팔각도", "부상횟수", "부상일수"]
+    .reset_index()
 )
 
 if result.empty:
@@ -329,18 +160,16 @@ if result.empty:
 
 
 # ---------------------------------------
-# 분석 결과
+# 데이터 요약
 # ---------------------------------------
-st.subheader("4. 선수별 분석 데이터")
+st.subheader("📋 선수별 데이터")
 
-st.write(
-    f"분석에 사용된 선수 수: **{len(result)}명**"
-)
+st.write(f"분석 대상 선수 수: **{len(result)}명**")
 
 st.dataframe(
     result.rename(
         columns={
-            "선수": "선수명",
+            "선수": "선수 이름",
             "팔각도": "팔 각도(도)",
             "부상횟수": "부상 횟수",
             "부상일수": "부상 일수"
@@ -352,10 +181,10 @@ st.dataframe(
 
 
 # ---------------------------------------
-# 그래프 1
+# 그래프 1: 팔 각도와 부상 횟수
 # ---------------------------------------
 st.divider()
-st.subheader("5. 팔 각도와 부상 횟수의 관계")
+st.subheader("📊 팔 각도와 부상 횟수의 관계")
 
 fig1 = px.scatter(
     result,
@@ -368,7 +197,7 @@ fig1 = px.scatter(
         "부상일수": True
     },
     labels={
-        "팔각도": "팔 각도 (도)",
+        "팔각도": "팔 각도(도)",
         "부상횟수": "부상 횟수"
     },
     title="선수별 팔 각도와 부상 횟수"
@@ -380,27 +209,18 @@ fig1.update_traces(
 
 fig1.update_layout(
     height=550,
-    xaxis_title="팔 각도 (도)",
-    yaxis_title="부상 횟수",
-    hovermode="closest"
+    xaxis_title="팔 각도(도)",
+    yaxis_title="부상 횟수"
 )
 
-st.plotly_chart(
-    fig1,
-    use_container_width=True
-)
-
-st.caption(
-    "점 하나가 선수 한 명을 나타냅니다. "
-    "점에 마우스를 올리면 선수 이름과 데이터를 확인할 수 있습니다."
-)
+st.plotly_chart(fig1, use_container_width=True)
 
 
 # ---------------------------------------
-# 그래프 2
+# 그래프 2: 팔 각도와 부상 일수
 # ---------------------------------------
 st.divider()
-st.subheader("6. 팔 각도와 부상 일수의 관계")
+st.subheader("📊 팔 각도와 부상 일수의 관계")
 
 fig2 = px.scatter(
     result,
@@ -413,7 +233,7 @@ fig2 = px.scatter(
         "부상일수": True
     },
     labels={
-        "팔각도": "팔 각도 (도)",
+        "팔각도": "팔 각도(도)",
         "부상일수": "부상 일수"
     },
     title="선수별 팔 각도와 부상 일수"
@@ -425,36 +245,32 @@ fig2.update_traces(
 
 fig2.update_layout(
     height=550,
-    xaxis_title="팔 각도 (도)",
-    yaxis_title="부상 일수",
-    hovermode="closest"
+    xaxis_title="팔 각도(도)",
+    yaxis_title="부상 일수"
 )
 
-st.plotly_chart(
-    fig2,
-    use_container_width=True
-)
-
-st.caption(
-    "점 하나가 선수 한 명을 나타냅니다. "
-    "점에 마우스를 올리면 선수 이름과 데이터를 확인할 수 있습니다."
-)
+st.plotly_chart(fig2, use_container_width=True)
 
 
 # ---------------------------------------
 # 데이터 다운로드
 # ---------------------------------------
 st.divider()
-st.subheader("7. 분석 데이터 다운로드")
+st.subheader("💾 분석 데이터 다운로드")
 
-csv = result.rename(
+download_data = result.rename(
     columns={
-        "선수": "선수명",
+        "선수": "선수 이름",
         "팔각도": "팔 각도(도)",
         "부상횟수": "부상 횟수",
         "부상일수": "부상 일수"
     }
-).to_csv(index=False, encoding="utf-8-sig")
+)
+
+csv = download_data.to_csv(
+    index=False,
+    encoding="utf-8-sig"
+)
 
 st.download_button(
     label="분석 결과 CSV 다운로드",
@@ -463,8 +279,9 @@ st.download_button(
     mime="text/csv"
 )
 
-st.info(
-    "이 앱은 산점도만 표시하며 회귀선이나 회귀분석 결과는 추가하지 않았습니다. "
-    "산점도는 두 변수 사이의 관계를 살펴보는 자료이며, "
-    "그 자체만으로 팔 각도가 부상의 원인이라고 판단할 수는 없습니다."
+st.caption(
+    "각 점은 선수 한 명을 의미합니다. 점에 마우스를 올리면 선수 이름과 데이터를 확인할 수 있습니다."
+)
+st.caption(
+    "산점도는 변수 사이의 관계를 보여 주며, 팔 각도가 부상의 원인이라는 것을 증명하지는 않습니다."
 )
