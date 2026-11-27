@@ -117,28 +117,35 @@ data = data[
     & (data["선수"].str.lower() != "nan")
 ]
 
-# 팔 각도 0~180도 범위만 사용
-invalid_angle = ~data["팔각도"].between(0, 180)
+# ---------------------------------------
+# 팔 각도 -180도 ~ 180도 범위 적용
+# ---------------------------------------
+invalid_angle = ~data["팔각도"].between(-180, 180)
 invalid_count = int(invalid_angle.sum())
 
-data = data[data["팔각도"].between(0, 180)].copy()
+data = data[
+    data["팔각도"].between(-180, 180)
+].copy()
 
-# 부상 횟수와 부상 일수의 결측값 처리
+if invalid_count > 0:
+    st.warning(
+        f"팔 각도가 -180~180도 범위를 벗어난 "
+        f"{invalid_count}개 행은 제외했습니다."
+    )
+
+# ---------------------------------------
+# 부상 횟수와 부상 일수 결측값 처리
+# ---------------------------------------
 data["부상횟수"] = data["부상횟수"].fillna(0)
 data["부상일수"] = data["부상일수"].fillna(0)
 
-# 음수 데이터 제거
+# 음수 부상 데이터 제거
 data.loc[data["부상횟수"] < 0, "부상횟수"] = 0
 data.loc[data["부상일수"] < 0, "부상일수"] = 0
 
 if data.empty:
-    st.error("분석할 수 있는 데이터가 없습니다. 원본 데이터를 확인해 주세요.")
+    st.error("분석할 수 있는 데이터가 없습니다.")
     st.stop()
-
-if invalid_count > 0:
-    st.warning(
-        f"팔 각도가 0~180도 범위를 벗어난 {invalid_count}개 행은 제외했습니다."
-    )
 
 
 # ---------------------------------------
@@ -213,7 +220,10 @@ fig1.update_layout(
     yaxis_title="부상 횟수"
 )
 
-st.plotly_chart(fig1, use_container_width=True)
+st.plotly_chart(
+    fig1,
+    use_container_width=True
+)
 
 
 # ---------------------------------------
@@ -249,39 +259,7 @@ fig2.update_layout(
     yaxis_title="부상 일수"
 )
 
-st.plotly_chart(fig2, use_container_width=True)
-
-
-# ---------------------------------------
-# 데이터 다운로드
-# ---------------------------------------
-st.divider()
-st.subheader("💾 분석 데이터 다운로드")
-
-download_data = result.rename(
-    columns={
-        "선수": "선수 이름",
-        "팔각도": "팔 각도(도)",
-        "부상횟수": "부상 횟수",
-        "부상일수": "부상 일수"
-    }
-)
-
-csv = download_data.to_csv(
-    index=False,
-    encoding="utf-8-sig"
-)
-
-st.download_button(
-    label="분석 결과 CSV 다운로드",
-    data=csv,
-    file_name="팔각도_부상분석.csv",
-    mime="text/csv"
-)
-
-st.caption(
-    "각 점은 선수 한 명을 의미합니다. 점에 마우스를 올리면 선수 이름과 데이터를 확인할 수 있습니다."
-)
-st.caption(
-    "산점도는 변수 사이의 관계를 보여 주며, 팔 각도가 부상의 원인이라는 것을 증명하지는 않습니다."
+st.plotly_chart(
+    fig2,
+    use_container_width=True
 )
